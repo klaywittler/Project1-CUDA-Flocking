@@ -168,7 +168,28 @@ void Boids::initSimulation(int N) {
   gridMinimum.y -= halfGridWidth;
   gridMinimum.z -= halfGridWidth;
 
-  // TODO-2.1 TODO-2.3 - Allocate additional buffers here.
+  // TODO-2.1 - Allocate additional buffers here.
+
+  // For efficient sorting and the uniform grid. These should always be parallel.
+  cudaMalloc((void**)&dev_particleArrayIndices, N * sizeof(int)); // What index in dev_pos and dev_velX represents this particle?
+  checkCUDAErrorWithLine("cudaMalloc dev_particleArrayIndices failed!");
+
+  cudaMalloc((void**)&dev_particleGridIndices, N * sizeof(int)); // What grid cell is this particle in?
+  checkCUDAErrorWithLine("cudaMalloc dev_particleGridIndices failed!");
+  // needed for use with thrust
+
+  dev_thrust_particleArrayIndices = thrust::device_ptr<int>(dev_particleArrayIndices);
+  dev_thrust_particleGridIndices = thrust::device_ptr<int>(dev_particleGridIndices);
+
+  cudaMalloc((void**)&dev_gridCellStartIndices, gridCellCount * sizeof(int)); // What part of dev_particleArrayIndices belongs
+  checkCUDAErrorWithLine("cudaMalloc dev_gridCellStartIndices failed!");
+
+  cudaMalloc((void**)&dev_gridCellEndIndices, gridCellCount * sizeof(int));   // to this cell?
+  checkCUDAErrorWithLine("cudaMalloc dev_gridCellEndIndices failed!");
+
+  // TODO-2.3 - Allocate additional buffers here.
+
+
   cudaDeviceSynchronize();
 }
 
@@ -233,18 +254,56 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
   // Rule 1: boids fly towards their local perceived center of mass, which excludes themselves
   // Rule 2: boids try to stay a distance d away from each other
   // Rule 3: boids try to match the speed of surrounding boids
-  return glm::vec3(0.0f, 0.0f, 0.0f);
+	glm::vec3 perceived_com(0.0f);
+	glm::vec3 perceived_dist(0.0f);
+	glm::vec3 perceived_vel(0.0f);
+	int num_com = 0;
+	int num_vel = 0;
+
+	for (int b = 0; b < N; b++) {
+		if (b != iSelf) {
+			float boidDistance = glm::distance(pos[iSelf], pos[b]);
+			if (boidDistance < rule1Distance) {
+				perceived_com += pos[b];
+				++num_com;
+			}
+			if (boidDistance < rule2Distance) {
+				perceived_dist -= (pos[b] - pos[iSelf]);
+			}
+			if (boidDistance < rule3Distance) {
+				perceived_vel += vel[b];
+				++num_vel;
+			}
+		}
+	}
+
+	perceived_com = num_com > 0 ? perceived_com / (float)num_com : pos[iSelf];
+	perceived_vel = num_vel > 0 ? perceived_vel / (float)num_vel : glm::vec3(0.0f);
+
+	glm::vec3 result1 = (perceived_com - pos[iSelf]) * rule1Scale;
+	glm::vec3 result2 = perceived_dist * rule2Scale;
+	glm::vec3 result3 = perceived_vel * rule3Scale;
+
+  return result1 + result2 + result3;
 }
 
 /**
 * TODO-1.2 implement basic flocking
-* For each of the `N` bodies, update its position based on its current velocity.
+* For each of the `N` bodies, update its velocity based on its current velocity.
 */
 __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
-  glm::vec3 *vel1, glm::vec3 *vel2) {
-  // Compute a new velocity based on pos and vel1
-  // Clamp the speed
-  // Record the new velocity into vel2. Question: why NOT vel1?
+	glm::vec3 *vel1, glm::vec3 *vel2) {
+	// Compute a new velocity based on pos and vel1
+	// Clamp the speed
+	// Record the new velocity into vel2. Question: why NOT vel1?
+		  // do not want to update velocities based on another boids new velocity so assign to different variables
+		 // synchronization
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return;
+	}
+	glm::vec3 newVel = computeVelocityChange(N, index, pos, vel1) + vel1[index];
+	vel2[index] = glm::length(newVel) > maxSpeed ? glm::normalize(newVel) * maxSpeed : newVel;
 }
 
 /**
@@ -348,22 +407,51 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
 */
 void Boids::stepSimulationNaive(float dt) {
   // TODO-1.2 - use the kernels you wrote to step the simulation forward in time.
+	dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+
+	kernUpdateVelocityBruteForce<<<fullBlocksPerGrid, blockSize>>>(numObjects, dev_pos, dev_vel1, dev_vel2);
+	checkCUDAErrorWithLine("kernUpdateVelocityBruteForce failed!");
+
+	kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(numObjects, dt, dev_pos, dev_vel2);
+	checkCUDAErrorWithLine("kernUpdatePos failed!");
   // TODO-1.2 ping-pong the velocity buffers
+	//cudaMemcpy(dev_vel1, dev_vel2, sizeof(glm::vec3) * numObjects, cudaMemcpyDeviceToDevice);
+	glm::vec3 *temp = dev_vel1;
+	dev_vel1 = dev_vel2;
+	dev_vel2 = temp;
+
 }
 
 void Boids::stepSimulationScatteredGrid(float dt) {
+	dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
   // TODO-2.1
   // Uniform Grid Neighbor search using Thrust sort.
   // In Parallel:
   // - label each particle with its array index as well as its grid index.
   //   Use 2x width grids.
+
   // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
   //   are welcome to do a performance comparison.
+	//thrust::sort_by_key(dev_thrust_keys, dev_thrust_keys + N, dev_thrust_values);
+
   // - Naively unroll the loop for finding the start and end indices of each
   //   cell's data pointers in the array of boid indices
+
   // - Perform velocity updates using neighbor search
+	/*kernUpdateVelNeighborSearchScattered<<<fullBlocksPerGrid, blockSize >>>(
+		numObjects, gridResolution, gridMinumum,
+		gridInverseCellWidth, gridCellWidth,
+		dev_gridCellStartIndices, dev_gridCellEndIndices,
+		dev_particleArrayIndices,
+		dev_pos, dev_vel1, dev_vel2)*/
+
   // - Update positions
+	/*kernUpdatePos <<<fullBlocksPerGrid, blockSize >>> (numObjects, dt, dev_pos, dev_vel2);
+	checkCUDAErrorWithLine("kernUpdatePos failed!");*/
+
   // - Ping-pong buffers as needed
+
+	
 }
 
 void Boids::stepSimulationCoherentGrid(float dt) {
@@ -389,7 +477,14 @@ void Boids::endSimulation() {
   cudaFree(dev_vel2);
   cudaFree(dev_pos);
 
-  // TODO-2.1 TODO-2.3 - Free any additional buffers here.
+  // TODO-2.1 - Free any additional buffers here.
+  cudaFree(dev_particleArrayIndices);
+  cudaFree(dev_particleGridIndices);
+  cudaFree(dev_gridCellStartIndices);
+  cudaFree(dev_gridCellEndIndices);
+
+  //TODO-2.3 - Free any additional buffers here.
+
 }
 
 void Boids::unitTest() {
