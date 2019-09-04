@@ -348,6 +348,14 @@ __global__ void kernComputeIndices(int N, int gridResolution,
     // - Label each boid with the index of its grid cell.
     // - Set up a parallel array of integer indices as pointers to the actual
     //   boid data in pos and vel1/vel2
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return; 
+	}
+
+	glm::ivec3 gridIndex3D = (glm::ivec3)((pos[index] - gridMin)*inverseCellWidth);
+	gridIndices[index] = gridIndex3Dto1D(gridIndex3D.x, gridIndex3D.y, gridIndex3D.z, gridResolution);
+	indices[index] = index;
 }
 
 // LOOK-2.1 Consider how this could be useful for indicating that a cell
@@ -365,6 +373,16 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
   // Identify the start point of each cell in the gridIndices array.
   // This is basically a parallel unrolling of a loop that goes
   // "this index doesn't match the one before it, must be a new cell!"
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return;
+	}
+	if (index == 0 ||particleGridIndices[index] != particleGridIndices[index-1]) {
+		gridCellStartIndices[particleGridIndices[index]] = index;
+	}
+	if (index == N-1 || particleGridIndices[index] != particleGridIndices[index + 1]) {
+		gridCellEndIndices[particleGridIndices[index]] = index;
+	}
 }
 
 __global__ void kernUpdateVelNeighborSearchScattered(
@@ -415,7 +433,6 @@ void Boids::stepSimulationNaive(float dt) {
 	kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(numObjects, dt, dev_pos, dev_vel2);
 	checkCUDAErrorWithLine("kernUpdatePos failed!");
   // TODO-1.2 ping-pong the velocity buffers
-	//cudaMemcpy(dev_vel1, dev_vel2, sizeof(glm::vec3) * numObjects, cudaMemcpyDeviceToDevice);
 	glm::vec3 *temp = dev_vel1;
 	dev_vel1 = dev_vel2;
 	dev_vel2 = temp;
@@ -430,31 +447,44 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   // - label each particle with its array index as well as its grid index.
   //   Use 2x width grids.
 
+	kernComputeIndices<<<fullBlocksPerGrid, blockSize >>>(numObjects, gridSideCount, gridMinimum,
+		gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+	checkCUDAErrorWithLine("kernComputeIndices failed!");
+
   // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
   //   are welcome to do a performance comparison.
-	//thrust::sort_by_key(dev_thrust_keys, dev_thrust_keys + N, dev_thrust_values);
+
+	thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
 
   // - Naively unroll the loop for finding the start and end indices of each
   //   cell's data pointers in the array of boid indices
 
+	kernIdentifyCellStartEnd <<<fullBlocksPerGrid, blockSize >>>(numObjects, dev_particleArrayIndices,
+		dev_gridCellStartIndices, dev_gridCellEndIndices);
+	checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
+
   // - Perform velocity updates using neighbor search
-	/*kernUpdateVelNeighborSearchScattered<<<fullBlocksPerGrid, blockSize >>>(
-		numObjects, gridResolution, gridMinumum,
-		gridInverseCellWidth, gridCellWidth,
-		dev_gridCellStartIndices, dev_gridCellEndIndices,
-		dev_particleArrayIndices,
-		dev_pos, dev_vel1, dev_vel2)*/
+
+	kernUpdateVelNeighborSearchScattered<<<fullBlocksPerGrid, blockSize >>>(numObjects, gridSideCount, gridMinimum,
+		gridInverseCellWidth, gridCellWidth, dev_gridCellStartIndices, dev_gridCellEndIndices,
+		dev_particleArrayIndices, dev_pos, dev_vel1, dev_vel2);
+	checkCUDAErrorWithLine("kernUpdateVelNeighborSearchScattered failed!");
 
   // - Update positions
-	/*kernUpdatePos <<<fullBlocksPerGrid, blockSize >>> (numObjects, dt, dev_pos, dev_vel2);
-	checkCUDAErrorWithLine("kernUpdatePos failed!");*/
+
+	kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(numObjects, dt, dev_pos, dev_vel2);
+	checkCUDAErrorWithLine("kernUpdatePos failed!");
 
   // - Ping-pong buffers as needed
+	glm::vec3 *temp = dev_vel1;
+	dev_vel1 = dev_vel2;
+	dev_vel2 = temp;
 
 	
 }
 
 void Boids::stepSimulationCoherentGrid(float dt) {
+	dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
   // TODO-2.3 - start by copying Boids::stepSimulationNaiveGrid
   // Uniform Grid Neighbor search using Thrust sort on cell-coherent data.
   // In Parallel:
