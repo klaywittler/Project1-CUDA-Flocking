@@ -377,7 +377,7 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 	if (index >= N) {
 		return;
 	}
-	if (index == 0 ||particleGridIndices[index] != particleGridIndices[index-1]) {
+	if (index == 0 || particleGridIndices[index] != particleGridIndices[index-1]) {
 		gridCellStartIndices[particleGridIndices[index]] = index;
 	}
 	if (index == N-1 || particleGridIndices[index] != particleGridIndices[index + 1]) {
@@ -399,6 +399,60 @@ __global__ void kernUpdateVelNeighborSearchScattered(
   // - Access each boid in the cell and compute velocity change from
   //   the boids rules, if this boid is within the neighborhood distance.
   // - Clamp the speed change before putting the new speed in vel2
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return;
+	}
+	int ptrIndex = particleArrayIndices[index];
+
+	glm::ivec3 gridIndex3D = (glm::ivec3)((pos[ptrIndex] - gridMin)*inverseCellWidth);
+	int currGrid = gridIndex3Dto1D(gridIndex3D.x, gridIndex3D.y, gridIndex3D.z, gridResolution);
+	int numCells = gridResolution * gridResolution * gridResolution;
+
+	glm::vec3 perceived_com(0.0f);
+	glm::vec3 perceived_dist(0.0f);
+	glm::vec3 perceived_vel(0.0f);
+	int num_com = 0;
+	int num_vel = 0;
+
+	for (int c = 0; c <= numCells; c++) {
+		glm::vec3 minCell = c * cellWidth - gridMin;
+		glm::vec3 maxCell = minCell + cellWidth;
+		glm::bvec3 gte1 = glm::greaterThanEqual(pos[ptrIndex] + cellWidth, minCell);
+		glm::bvec3 lte1 = glm::lessThanEqual(pos[ptrIndex] + cellWidth, maxCell);
+		glm::bvec3 gte2 = glm::greaterThanEqual(pos[ptrIndex] - cellWidth, minCell);
+		glm::bvec3 lte2 = glm::lessThanEqual(pos[ptrIndex] - cellWidth, maxCell);
+
+		if (glm::all(gte1) && glm::all(lte1) || glm::all(gte2) && glm::all(lte2) || c == currGrid) {
+			for (int b = gridCellStartIndices[c]; b <= gridCellEndIndices[c]; b++) {
+				int ptrB = particleArrayIndices[b];
+				if (ptrB != ptrIndex) {
+					float boidDistance = glm::distance(pos[ptrIndex], pos[ptrB]);
+					if (boidDistance < rule1Distance) {
+						perceived_com += pos[ptrB];
+						++num_com;
+					}
+					if (boidDistance < rule2Distance) {
+						perceived_dist -= (pos[ptrB] - pos[ptrIndex]);
+					}
+					if (boidDistance < rule3Distance) {
+						perceived_vel += vel1[ptrB];
+						++num_vel;
+					}
+				}
+			}
+		}
+	}
+
+	perceived_com = num_com > 0 ? perceived_com / (float)num_com : pos[ptrIndex];
+	perceived_vel = num_vel > 0 ? perceived_vel / (float)num_vel : glm::vec3(0.0f);
+
+	glm::vec3 result1 = (perceived_com - pos[ptrIndex]) * rule1Scale;
+	glm::vec3 result2 = perceived_dist * rule2Scale;
+	glm::vec3 result3 = perceived_vel * rule3Scale;
+
+	glm::vec3 newVel = result1 + result2 + result3 + vel1[ptrIndex];
+	vel2[ptrIndex] = glm::length(newVel) > maxSpeed ? glm::normalize(newVel) * maxSpeed : newVel;
 }
 
 __global__ void kernUpdateVelNeighborSearchCoherent(
