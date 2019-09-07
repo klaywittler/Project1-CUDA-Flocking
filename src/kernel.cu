@@ -256,6 +256,17 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
 * Compute the new velocity on the body with index `iSelf` due to the `N` boids
 * in the `pos` and `vel` arrays.
 */
+
+__device__ void kernWrapPos(glm::vec3 &vec) {
+	vec.x = vec.x < -scene_scale ? -scene_scale - vec.x : vec.x;
+	vec.y = vec.y < -scene_scale ? -scene_scale - vec.y : vec.y;
+	vec.z = vec.z < -scene_scale ? -scene_scale - vec.z : vec.z;
+
+	vec.x = vec.x > scene_scale ? scene_scale - vec.x : vec.x;
+	vec.y = vec.y > scene_scale ? scene_scale - vec.y : vec.y;
+	vec.z = vec.z > scene_scale ? scene_scale - vec.z : vec.z;
+}
+
 __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *pos, const glm::vec3 *vel, int start = 0, int *particleArrayIndices = NULL) {
   // Rule 1: boids fly towards their local perceived center of mass, which excludes themselves
   // Rule 2: boids try to stay a distance d away from each other
@@ -270,14 +281,16 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
 	for (int b = start; b < N; b++) {
 		int iCheck = particleArrayIndices == NULL ? b : particleArrayIndices[b];
 		if (iCheck != iSelf) {
-			glm::vec3 checkBoid = pos[iCheck];
-			float boidDistance = glm::distance(iBoid, checkBoid);
+			glm::vec3 checkBoid = pos[iCheck] - iBoid;
+			kernWrapPos(checkBoid);
+
+			float boidDistance = glm::distance(glm::vec3(0.0f), checkBoid);
 			if (boidDistance < rule1Distance) {
 				perceived_com += checkBoid;
 				++num_com;
 			}
 			if (boidDistance < rule2Distance) {
-				perceived_dist -= (checkBoid - iBoid);
+				perceived_dist -= checkBoid;
 			}
 			if (boidDistance < rule3Distance) {
 				perceived_vel += vel[iCheck];
@@ -286,10 +299,10 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
 		}
 	}
 
-	perceived_com = num_com > 0 ? perceived_com / (float)num_com : iBoid;
+	perceived_com = num_com > 0 ? perceived_com / (float)num_com : glm::vec3(0.0f);
 	perceived_vel = num_vel > 0 ? perceived_vel / (float)num_vel : glm::vec3(0.0f);
 
-	glm::vec3 result1 = (perceived_com - iBoid) * rule1Scale;
+	glm::vec3 result1 = perceived_com * rule1Scale;
 	glm::vec3 result2 = perceived_dist * rule2Scale;
 	glm::vec3 result3 = perceived_vel * rule3Scale;
 
@@ -407,16 +420,14 @@ __device__ bool cellIntersectBoid(glm::vec3 bMin, glm::vec3 bMax, glm::vec3 cent
 }
 
 __device__ bool boidNearCell(glm::vec3 cellCenter, float b, glm::vec3 boid, float radius) {
+	//This section takes into account wrap around
+	boid = boid - cellCenter;
+	kernWrapPos(boid);
+	cellCenter = cellCenter - cellCenter;
+	// comment out if wrap detection is not desired
+
 	glm::vec3 B(radius + b);
-
 	glm::vec3 newCenter = boid - cellCenter;
-	//newCenter.x = cellCenter.x - B.x < -scene_scale ? scene_scale : newCenter.x;
-	//newCenter.y = cellCenter.y - B.y < -scene_scale ? scene_scale : newCenter.y;
-	//newCenter.z = cellCenter.z - B.z < -scene_scale ? scene_scale : newCenter.z;
-
-	//newCenter.x = cellCenter.x + B.x > scene_scale ? -scene_scale : newCenter.x;
-	//newCenter.y = cellCenter.y + B.y > scene_scale ? -scene_scale : newCenter.y;
-	//newCenter.z = cellCenter.z + B.z > scene_scale ? -scene_scale : newCenter.z;
 
 	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(newCenter, -B))) return true;
 	return false;
@@ -442,7 +453,6 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 	glm::vec3 result(0.0f);
 
-
 	for (int x = 0; x < gridResolution; x++) {
 		for (int y = 0; y < gridResolution; y++) {
 			for (int z = 0; z < gridResolution; z++) {
@@ -456,8 +466,7 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 				//glm::vec3 bMax = bMin + glm::vec3(cellWidth);
 				//bool withinRadius = cellIntersectBoid(bMin, bMax, boid, radius);
 				if (c == currGrid || withinRadius) {
-					if (particleArrayIndices) { result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices); }
-					else{ result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c]); }
+					result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices); 
 				}
 			}
 		}
