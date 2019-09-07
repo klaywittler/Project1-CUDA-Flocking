@@ -54,6 +54,29 @@ void checkCUDAError(const char *msg, int line = -1) {
 /*! Size of the starting area in simulation space. */
 #define scene_scale 100.0f
 
+/*****************************
+* Self defined configuration *
+******************************/
+
+//Will call a function to trim cells from search
+#define OPTIMIZE_SEARCH 1
+#define GLM_CLAMP 0
+//Change the cell size to be n times the max radius rule
+float nXradius = 2.0;
+
+struct DebugVector {
+	float x;
+	float y;
+	float z;
+};
+
+__device__ DebugVector debugVectorViewer(glm::vec3 v) {
+	return { v.x, v.y, v.z };
+}
+
+#define glmvec3(_name, _x,_y,_z)    glm::vec3 _name(_x,_y,_z); \
+									DebugVector _name##_ = debugVectorViewer(_name);
+
 /***********************************************
 * Kernel state (pointers are device pointers) *
 ***********************************************/
@@ -135,18 +158,6 @@ __global__ void kernGenerateRandomPosArray(int time, int N, glm::vec3 * arr, flo
   }
 }
 
-struct DebugVector {
-	float x;
-	float y;
-	float z;
-};
-
-__device__ DebugVector debugVectorViewer(glm::vec3 v) {
-	return { v.x, v.y, v.z };
-}
-
-#define glmvec3(_name, _x,_y,_z)    glm::vec3 _name(_x,_y,_z); \DebugVector _name##_ = debugVectorViewer(_name);
-
 /**
 * Initialize memory, update some globals
 */
@@ -171,7 +182,7 @@ void Boids::initSimulation(int N) {
   checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");
 
   // LOOK-2.1 computing grid params
-  gridCellWidth = 2.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+  gridCellWidth = nXradius * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
   int halfSideCount = (int)(scene_scale / gridCellWidth) + 1;
   gridSideCount = 2 * halfSideCount;
 
@@ -324,7 +335,11 @@ __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
 		return;
 	}
 	glm::vec3 newVel = computeVelocityChange(N, index, pos, vel1) + vel1[index];
+#	if GLM_CLAMP
+	vel2[index] = glm::clamp(newVel, -glm::vec3(maxSpeed), glm::vec3(maxSpeed));
+	#else
 	vel2[index] = glm::length(newVel) > maxSpeed ? glm::normalize(newVel) * maxSpeed : newVel;
+	#endif
 }
 
 /**
@@ -409,9 +424,8 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 __device__ bool boidNearCell(float cellWidth, int x, int y, int z, glm::vec3 gridMin, glm::vec3 boid, float radius) {
 	//Increases the cell size by radius size and checks if the boid is inside the 'new cell'
 	//returns if the cell should be considered in the search
-	glm::vec3 bMin(((float)x)*cellWidth - gridMin.x, ((float)y)*cellWidth - gridMin.y, ((float)z)*cellWidth - gridMin.z);
-	glm::vec3 cellCenter = bMin + glm::vec3(cellWidth / 2.0);
-
+	//glm::vec3 cellCenter(((float)x)*1.5*cellWidth - gridMin.x, ((float)y)*1.5*cellWidth - gridMin.y, ((float)z)*1.5*cellWidth - gridMin.z);
+	glm::vec3 cellCenter(glm::vec3(((float)x)*1.5*cellWidth, ((float)y)*1.5*cellWidth, ((float)z)*1.5*cellWidth) - gridMin);
 	glm::vec3 B(radius + cellWidth / 2.0);
 	glm::vec3 newCenter = boid - cellCenter;
 
@@ -436,29 +450,37 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 	float radius = glm::max(glm::max(rule1Distance, rule2Distance), rule3Distance);
 
 	glm::ivec3 gridIndex3D = glm::floor((boid - gridMin)*inverseCellWidth);
-	glm::ivec3 min_gridIndex3D = (boid - gridMin - radius)*inverseCellWidth;
-	glm::ivec3 max_gridIndex3D = (boid - gridMin + radius)*inverseCellWidth;
-	min_gridIndex3D = glm::clamp(min_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution+1));
-	max_gridIndex3D = glm::clamp(max_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution+1));
+	glm::vec3 min_grid3D = glm::floor((boid - gridMin - radius)*inverseCellWidth);
+	glm::vec3 max_grid3D = glm::ceil((boid - gridMin + radius)*inverseCellWidth);
+	glm::ivec3 min_gridIndex3D = glm::clamp(min_grid3D, glm::vec3(0), glm::vec3(gridResolution));
+	glm::ivec3 max_gridIndex3D = glm::clamp(max_grid3D, glm::vec3(0), glm::vec3(gridResolution));
 	int currGrid = gridIndex3Dto1D(gridIndex3D.x, gridIndex3D.y, gridIndex3D.z, gridResolution);
 	int numCells = gridResolution * gridResolution * gridResolution;
 
 	glm::vec3 result(0.0f);
 
-	for (int x = min_gridIndex3D.x; x < max_gridIndex3D.x; x++) {
-		for (int y = min_gridIndex3D.y; y < max_gridIndex3D.y; y++) {
-			for (int z = min_gridIndex3D.z; z < max_gridIndex3D.z; z++) {
+	for (int x = min_gridIndex3D.x; x <= max_gridIndex3D.x; x++) {
+		for (int y = min_gridIndex3D.y; y <= max_gridIndex3D.y; y++) {
+			for (int z = min_gridIndex3D.z; z <= max_gridIndex3D.z; z++) {
 				int c = gridIndex3Dto1D(x, y, z, gridResolution);
 				if (c > numCells || gridCellStartIndices[c] > N || gridCellEndIndices[c] > N) { continue; }
-				if (c == currGrid || boidNearCell(cellWidth,x, y, z , gridMin, boid, radius)) {
+				#if OPTIMIZE_SEARCH
+				if (c == currGrid || boidNearCell(cellWidth, x, y, z , gridMin, boid, radius)) {
 					result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices);
 				}
+				#else
+				result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices);
+				#endif
 			}
 		}
 	}
 
 	glm::vec3 newVel = result + vel1[iSelf];
+	#if GLM_CLAMP
+	vel2[iSelf] = glm::clamp(newVel, -glm::vec3(maxSpeed), glm::vec3(maxSpeed));
+	#else
 	vel2[iSelf] = glm::length(newVel) > maxSpeed ? glm::normalize(newVel) * maxSpeed : newVel;
+	#endif
 }
 
 __global__ void kernUpdateVelNeighborSearchScattered(
