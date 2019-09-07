@@ -41,7 +41,7 @@ int height = 720;
 int pointSize = 2;
 /*int width = 2560;
 int height = 1440;
-int pointSize = 3*/;
+int pointSize = 3;*/
 
 // For camera controls
 bool leftMousePressed = false;
