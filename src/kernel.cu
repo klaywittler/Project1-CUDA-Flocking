@@ -410,13 +410,6 @@ __device__ bool boidNearCell(glm::vec3 cellCenter, float b, glm::vec3 boid, floa
 	glm::vec3 B(radius + b);
 
 	glm::vec3 newCenter = boid - cellCenter;
-	//newCenter.x = cellCenter.x - B.x < -scene_scale ? scene_scale : newCenter.x;
-	//newCenter.y = cellCenter.y - B.y < -scene_scale ? scene_scale : newCenter.y;
-	//newCenter.z = cellCenter.z - B.z < -scene_scale ? scene_scale : newCenter.z;
-
-	//newCenter.x = cellCenter.x + B.x > scene_scale ? -scene_scale : newCenter.x;
-	//newCenter.y = cellCenter.y + B.y > scene_scale ? -scene_scale : newCenter.y;
-	//newCenter.z = cellCenter.z + B.z > scene_scale ? -scene_scale : newCenter.z;
 
 	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(newCenter, -B))) return true;
 	return false;
@@ -442,7 +435,6 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 	glm::vec3 result(0.0f);
 
-
 	for (int x = 0; x < gridResolution; x++) {
 		for (int y = 0; y < gridResolution; y++) {
 			for (int z = 0; z < gridResolution; z++) {
@@ -456,8 +448,7 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 				//glm::vec3 bMax = bMin + glm::vec3(cellWidth);
 				//bool withinRadius = cellIntersectBoid(bMin, bMax, boid, radius);
 				if (c == currGrid || withinRadius) {
-					if (particleArrayIndices) { result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices); }
-					else{ result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c]); }
+					result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices);
 				}
 			}
 		}
