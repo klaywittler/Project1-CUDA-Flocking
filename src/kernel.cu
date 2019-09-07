@@ -135,6 +135,18 @@ __global__ void kernGenerateRandomPosArray(int time, int N, glm::vec3 * arr, flo
   }
 }
 
+struct DebugVector {
+	float x;
+	float y;
+	float z;
+};
+
+__device__ DebugVector debugVectorViewer(glm::vec3 v) {
+	return { v.x, v.y, v.z };
+}
+
+#define glmvec3(_name, _x,_y,_z)    glm::vec3 _name(_x,_y,_z); \DebugVector _name##_ = debugVectorViewer(_name);
+
 /**
 * Initialize memory, update some globals
 */
@@ -407,18 +419,6 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 	}
 }
 
-__device__ float squared(float v) { return v * v; }
-__device__ bool cellIntersectBoid(glm::vec3 bMin, glm::vec3 bMax, glm::vec3 center, float radius) {
-	float r2 = squared(radius);
-		if (center.x <= bMin.x) r2 -= squared(center.x - bMin.x);
-		else if (center.x >= bMax.x) r2 -= squared(center.x - bMax.x);
-		if (center.y <= bMin.y) r2 -= squared(center.y - bMin.y);
-		else if (center.y >= bMax.y) r2 -= squared(center.y - bMax.y);
-		if (center.z <= bMin.z) r2 -= squared(center.z - bMin.z);
-		else if (center.z >= bMax.z) r2 -= squared(center.z - bMax.z);
-	return r2  > 0;
-}
-
 __device__ bool boidNearCell(glm::vec3 cellCenter, float b, glm::vec3 boid, float radius) {
 	//This section takes into account wrap around
 	boid = boid - cellCenter;
@@ -429,8 +429,12 @@ __device__ bool boidNearCell(glm::vec3 cellCenter, float b, glm::vec3 boid, floa
 	glm::vec3 B(radius + b);
 	glm::vec3 newCenter = boid - cellCenter;
 
-	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(newCenter, -B))) return true;
-	return false;
+	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(-B, newCenter))) {
+		return true; 
+	}
+	else {
+		return false;
+	}
 }
 
 __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
@@ -445,6 +449,7 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 	int iSelf = particleArrayIndices == NULL ? index : particleArrayIndices[index];;
 	glm::vec3 boid = pos[iSelf];
+	//glmvec3(boid_debug, boid.x, boid.y, boid.z);
 	float radius = glm::max(glm::max(rule1Distance, rule2Distance), rule3Distance);
 
 	glm::ivec3 gridIndex3D = glm::floor((boid - gridMin)*inverseCellWidth);
@@ -461,10 +466,9 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 				glm::vec3 bMin(((float)x)*cellWidth - gridMin.x, ((float)y)*cellWidth - gridMin.y, ((float)z)*cellWidth - gridMin.z);
 				glm::vec3 cellCenter = bMin + glm::vec3(cellWidth / 2.0);
+				//glmvec3(cellCenter_debug, cellCenter.x, cellCenter.y, cellCenter.z);
 				bool withinRadius = boidNearCell(cellCenter, cellWidth / 2.0, boid, radius);
 
-				//glm::vec3 bMax = bMin + glm::vec3(cellWidth);
-				//bool withinRadius = cellIntersectBoid(bMin, bMax, boid, radius);
 				if (c == currGrid || withinRadius) {
 					result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices); 
 				}
