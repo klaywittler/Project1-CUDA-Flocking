@@ -406,24 +406,26 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 	}
 }
 
-__device__ bool boidNearCell(glm::vec3 cellCenter, float b, glm::vec3 boid, float radius) {
-	glm::vec3 B(radius + b);
+__device__ bool boidNearCell(float cellWidth, int x, int y, int z, glm::vec3 gridMin, glm::vec3 boid, float radius) {
+	//Increases the cell size by radius size and checks if the boid is inside the 'new cell'
+	//returns if the cell should be considered in the search
+	glm::vec3 bMin(((float)x)*cellWidth - gridMin.x, ((float)y)*cellWidth - gridMin.y, ((float)z)*cellWidth - gridMin.z);
+	glm::vec3 cellCenter = bMin + glm::vec3(cellWidth / 2.0);
 
+	glm::vec3 B(radius + cellWidth / 2.0);
 	glm::vec3 newCenter = boid - cellCenter;
 
-	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(-B, newCenter))) {
-		return true; 
-	}
-	else {
-		return false;
-	}
+	if (glm::all(glm::lessThanEqual(newCenter, B)) && glm::all(glm::greaterThanEqual(-B, newCenter))) { return true; }
+	
+	return false;
 }
 
 __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 	float inverseCellWidth, float cellWidth,
 	int *gridCellStartIndices, int *gridCellEndIndices,
 	glm::vec3 *pos, glm::vec3 *vel1, glm::vec3 *vel2, int *particleArrayIndices = NULL ) {
-
+	//Search for both the uniform and coherent grids
+	//checks to see if particleArrayIndices is a valid input
 	int index = threadIdx.x + (blockIdx.x * blockDim.x);
 	if (index >= N) {
 		return;
@@ -431,7 +433,6 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 	int iSelf = particleArrayIndices == NULL ? index : particleArrayIndices[index];;
 	glm::vec3 boid = pos[iSelf];
-	//glmvec3(boid_debug, boid.x, boid.y, boid.z);
 	float radius = glm::max(glm::max(rule1Distance, rule2Distance), rule3Distance);
 
 	glm::ivec3 gridIndex3D = glm::floor((boid - gridMin)*inverseCellWidth);
@@ -445,13 +446,7 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 			for (int z = 0; z < gridResolution; z++) {
 				int c = gridIndex3Dto1D(x, y, z, gridResolution);
 				if (c > numCells || gridCellStartIndices[c] > N || gridCellEndIndices[c] > N) { continue; }
-
-				glm::vec3 bMin(((float)x)*cellWidth - gridMin.x, ((float)y)*cellWidth - gridMin.y, ((float)z)*cellWidth - gridMin.z);
-				glm::vec3 cellCenter = bMin + glm::vec3(cellWidth / 2.0);
-				//glmvec3(cellCenter_debug, cellCenter.x, cellCenter.y, cellCenter.z);
-				bool withinRadius = boidNearCell(cellCenter, cellWidth / 2.0, boid, radius);
-
-				if (c == currGrid || withinRadius) {
+				if (c == currGrid || boidNearCell(cellWidth,x, y, z , gridMin, boid, radius)) {
 					result += computeVelocityChange(gridCellEndIndices[c], iSelf, pos, vel1, gridCellStartIndices[c], particleArrayIndices);
 				}
 			}
