@@ -438,8 +438,8 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 	glm::ivec3 gridIndex3D = glm::floor((boid - gridMin)*inverseCellWidth);
 	glm::ivec3 min_gridIndex3D = (boid - gridMin - radius)*inverseCellWidth;
 	glm::ivec3 max_gridIndex3D = (boid - gridMin + radius)*inverseCellWidth;
-	/*min_gridIndex3D = glm::clamp(min_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution));
-	max_gridIndex3D = glm::clamp(max_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution));*/
+	min_gridIndex3D = glm::clamp(min_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution));
+	max_gridIndex3D = glm::clamp(max_gridIndex3D, glm::ivec3(0), glm::ivec3(gridResolution));
 	
 	int currGrid = gridIndex3Dto1D(gridIndex3D.x, gridIndex3D.y, gridIndex3D.z, gridResolution);
 	int numCells = gridResolution * gridResolution * gridResolution;
