@@ -16,9 +16,11 @@
 #define VISUALIZE 1
 #define UNIFORM_GRID 1
 #define COHERENT_GRID 1
+#define TIME 0
+
 
 // LOOK-1.2 - change this to adjust particle count in the simulation
-const int N_FOR_VIS = 50000;
+const int N_FOR_VIS = 5000;
 const float DT = 0.2f;
 
 /**
@@ -195,6 +197,15 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertPositions, boidVBO_positions);
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
+	#if TIME
+	cudaEvent_t event1, event2;
+	cudaEventCreate(&event1);
+	cudaEventCreate(&event2);
+
+	//record events around kernel launch
+	cudaEventRecord(event1, 0); //where 0 is the default stream
+	#endif
+
     // execute the kernel
     #if UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
@@ -203,6 +214,14 @@ void initShaders(GLuint * program) {
     #else
     Boids::stepSimulationNaive(DT);
     #endif
+	#if TIME
+	cudaEventRecord(event2, 0);
+	//calculate time
+	float dt_ms;
+	cudaEventElapsedTime(&dt_ms, event1, event2);
+
+	printf("Uniform grid time: %f ms \n", dt_ms);
+	#endif
 
     #if VISUALIZE
     Boids::copyBoidsToVBO(dptrVertPositions, dptrVertVelocities);
@@ -217,7 +236,7 @@ void initShaders(GLuint * program) {
     double timebase = 0;
     int frame = 0;
 
-    Boids::unitTest(); // LOOK-1.2 We run some basic example code to make sure
+    //Boids::unitTest(); // LOOK-1.2 We run some basic example code to make sure
                        // your CUDA development setup is ready to go.
 
     while (!glfwWindowShouldClose(window)) {

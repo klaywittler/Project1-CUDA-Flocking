@@ -59,7 +59,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 ******************************/
 
 //Will call a function to trim cells from search
-#define OPTIMIZE_SEARCH 1
+#define OPTIMIZE_SEARCH 0
 #define GLM_CLAMP 0
 //Change the cell size to be n times the max radius rule
 float nXradius = 2.0;
@@ -591,7 +591,6 @@ void Boids::stepSimulationScatteredGrid(float dt) {
 	glm::vec3 *temp = dev_vel1;
 	dev_vel1 = dev_vel2;
 	dev_vel2 = temp;
-	
 }
 
 void Boids::stepSimulationCoherentGrid(float dt) {
