@@ -7,12 +7,14 @@ Project 1 - Flocking**
 * Klayton Wittler
 	* [LinkedIn](https://www.linkedin.com/in/klayton-wittler/)
 * Tested on: Windows 10 Pro, i7-7700K @ 4.20GHz 16.0GB, GTX 1070 8.192GB (my PC)
-______
+
+## Sections
 
 * [Introduction](#introduction-to-boid-flocking)
 	* [Rules](#rules)
 	* [Approaches](#approaches)
 * [Performance Analaysis](#performance-analysis)
+	* [Questions](#questions)
 * [Addition Optimization](#additional-optimization)
 
 ![coherent 50k simulation](images/simulation_50k.gif)
@@ -83,7 +85,7 @@ The naive approach is for each boid to compare itself to everyother boid. This q
 To speed up the search we can take advantage of a uniform spatial grid data structure. As seen in 2D below, the environment is divided into cells which each boid will be binned into during a preprocess step.
 ![a uniform grid in 2D](images/Boids%20Ugrid%20base.png)
 
-In order to narrow the search we can just find the cells with a boids search radius and compare to each boid within those cells. For the 2D case where the cell width is twice the maximum rule distance, we just have to search 4 cells and in 3D this would be 8 cells.
+In order to narrow the search we can just find the cells with a boids search radius and compare to each boid within those cells. For the 2D case where the cell width is twice the maximum rule distance, we just have to search 4 cells and in 3D this would be 8 cells. If the cell width was the maximum rule distance, we would have to search 9 cells in the 2D case and 27 cells in the 3D case. 
 
 ![a uniform grid in 2D with neighborhood and cells to search for some particles shown](images/Boids%20Ugrid%20neighbor%20search%20shown.png)
 
@@ -96,27 +98,58 @@ We can further optimize this by also sorting the array that contains the positio
 ![buffers for generating a uniform grid using index sort, then making the boid data coherent](images/Boids%20Ugrids%20buffers%20data%20coherent.png)
 
 # Performance Analysis
+To do a performance analysis, vertical sync is turn off so that the frame rate won't be capped based on the monitor and the frames per second (fps) of a simulation is recorded.
 
+Initially visualization is turned off to get a better comparison of algorithm run times without display code running. The figure below displays all approaches including differing cell width of twice the maximum rule distance (8 cells) and at the maximum rule distance (27 cells). Cell width changes were not included for the naive approach since it does not divide the simulation into a grid. Below 20k boids the 27 cells search performs better than the 8 cells search and again becomes better above 100k boids. The sorting to do a coherent memory search seems to also have a fairly consistent increase in performance.
 
-![](images/num_boids_combined.png)
+![boids noVisual](images/num_boids_noVisual.png)
 
-![](images/block_size_noVisual.png)
+However, watching the boids flock is the fun part. We can see the performance for all approaches in the figure below and see that the general trends are the same as without visuals, but with some perforance decrease from rendering.
+
+![boids visual](images/num_boids_visual.png)
+
+Similarly, we can see which block size give the best performance. The algorithms in the figure below were ran without visual to have the most consistent baseline and were tried just at 20k boids. It can be seen that there is negligible differences between the number of threads in a block. It should also be noted that only multiples of 32 were tried since the warp size is 32 and any other numbers would result in wasted threads.
+
+![blocks noVisual](images/block_size_noVisual.png)
 
 
 ## Questions
-* For each implementation, how does changing the number of boids affect
-performance? Why do you think this is?
-* For each implementation, how does changing the block count and block size
-affect performance? Why do you think this is?
-* For the coherent uniform grid: did you experience any performance improvements
+* <b>For each implementation, how does changing the number of boids affect
+performance? Why do you think this is? </b>
+
+For the naive case, the performance drops exponentially do to the ![](images/OnSquared.png) time complexity. Each boid as the check itself against evryone else. On the other hand, uniform grid and uniform grid with coherent memory searches performances drops in piecewise-linear segments. This is because the comparison to other cells is constant in respect to the number of boids but the checks into neighboring cells is still ![](images/OnSquared.png). As the number of boids increases the number of boids that may be in a cell increases, ultimately resulting in significant increases in computation.
+
+* <b>For each implementation, how does changing the block count and block size
+affect performance? Why do you think this is? </b>
+
+The performance by changing the number of threads in a block was fairly negligible across algorithms. This is because the block count is scaled with the number of threads to a block so that if the threads per block increase the number of blocks will decrease by the same factor and vice versa. Since only factors of 32 were tried, there were not wasted threads to impact performance.
+
+* <b>For the coherent uniform grid: did you experience any performance improvements
 with the more coherent uniform grid? Was this the outcome you expected?
-Why or why not?
-* Did changing cell width and checking 27 vs 8 neighboring cells affect performance?
+Why or why not? </b>
+
+There was a pretty constant increase in the performance impact from having a coherent grid. This was expected since sorting typically becomes worth it as number of look ups increases.
+
+* <b>Did changing cell width and checking 27 vs 8 neighboring cells affect performance?
 Why or why not? Be careful: it is insufficient (and possibly incorrect) to say
-that 27-cell is slower simply because there are more cells to check!
+that 27-cell is slower simply because there are more cells to check! </b>
+
+Suprisingly checking 27 cells versus 8 cells did not always result in worse performance. This is most likely due to the higher resolution that having 27 cells gives, leveraging the constant time of checking cells over boids, but as the number of boids increases past a threshold the resolution no longer provides a benefit since there is a high probably boids are in all of the cells nearby anyway.
 
 # Additional Optimization
 
+Beyond just doing a coherent uniform grid, there are some other ways to optimize performance.
+
 ![coherent 200k simulation](images/simulation_200k.gif)
+
+Initially the uniform grid searches (coherent and not) were being looped through the z-axis first in the inner loop, y-axis next, and finally the x-axis. But since the objective of the coherent grid is to have nearby boids next to each other in memory this order is not the best since the index equation is ```x + y * gridResolution + z * gridResolution * gridResolution```. This lead to reversing the order, which the performance differences can be seen below, suprisingly at 20k and 50k boids this approach does not help. The comparison was not made on the normal uniform grid search, since there is no sorting in memory it would not have any impact.
+
+![](images/XYZ_ZYXloop.png)
+
+Fianlly, to further reduce the amount of cells to search I utilized the fact that a n-dimensional box can be described as ![](images/nDbox.png). Where b is half the side length, c is the center of the box, and x is the point in question. With this in mind we can take some cell in question, find the center c, increase the b that describes it by the maximum rule distance, and see if the boid x would now belong to the new cell. If so that means there are boids within the original cell that might be close enough the current boid to have an effect on its velocity. If not, even though the cell is a neighbor it can be excluded from the search. Seen in case 1 and 2 below.
+
+![](images/optimization_example.png)
+
+This seemed great in theory, however the performance data below does not suggest this helps. This approach most likely beats comparing the boid to all 8 vertices of the cell, and there might be ways to speed up the geometrical comparison even more.
 
 ![](images/optimized_noVisual.png)

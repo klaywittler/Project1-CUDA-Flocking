@@ -37,7 +37,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 *****************/
 
 /*! Block size used for CUDA kernel launch. */
-#define blockSize 128
+#define blockSize 1024
 
 // LOOK-1.2 Parameters for the boids algorithm.
 // These worked well in our reference implementation.
@@ -62,7 +62,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 #define OPTIMIZE_SEARCH 0
 #define GLM_CLAMP 0
 //Change the cell size to be n times the max radius rule
-float nXradius = 2.0;
+float nXradius = 1.0;
 
 struct DebugVector {
 	float x;
@@ -459,9 +459,9 @@ __device__ void kernSearch(int N, int gridResolution, glm::vec3 gridMin,
 
 	glm::vec3 result(0.0f);
 
-	for (int x = min_gridIndex3D.x; x <= max_gridIndex3D.x; x++) {
+	for (int z = min_gridIndex3D.z; z <= max_gridIndex3D.z; z++) {
 		for (int y = min_gridIndex3D.y; y <= max_gridIndex3D.y; y++) {
-			for (int z = min_gridIndex3D.z; z <= max_gridIndex3D.z; z++) {
+			for (int x = min_gridIndex3D.x; x <= max_gridIndex3D.x; x++) {
 				int c = gridIndex3Dto1D(x, y, z, gridResolution);
 				if (c > numCells || gridCellStartIndices[c] > N || gridCellEndIndices[c] > N) { continue; }
 				#if OPTIMIZE_SEARCH
