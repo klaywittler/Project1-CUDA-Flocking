@@ -146,7 +146,7 @@ Initially the uniform grid searches (coherent and not) were being looped through
 
 ![](images/XYZ_ZYXloop.png)
 
-Fianlly, to further reduce the amount of cells to search I utilized the fact that a n-dimensional box can be described as ![](images/nDbox.png). Where b is half the side length, c is the center of the box, and x is the point in question. With this in mind we can take some cell in question, find the center c, increase the b that describes it by the maximum rule distance, and see if the boid x would now belong to the new cell. If so that means there are boids within the original cell that might be close enough the current boid to have an effect on its velocity. If not, even though the cell is a neighbor it can be excluded from the search. Seen in case 1 and 2 below.
+Fianlly, to further reduce the amount of cells to search I utilized the fact that a n-dimensional box can be described as ![](images/nDbox.png). Where b is half the side length, c is the center of the box, and x is the point in question. With this in mind we can take some cell in question, find the center c, increase the b that describes it by the maximum rule distance, and see if the boid x would now belong to the new cell ![](images/nDbox_new.png). If so that means there are boids within the original cell that might be close enough the current boid to have an effect on its velocity. If not, even though the cell is a neighbor it can be excluded from the search. Seen in case 1 and 2 below.
 
 ![](images/optimization_example.png)
 
