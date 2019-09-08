@@ -150,6 +150,6 @@ Fianlly, to further reduce the amount of cells to search I utilized the fact tha
 
 ![](images/optimization_example.png)
 
-This seemed great in theory, however the performance data below does not suggest this helps. This approach most likely beats comparing the boid to all 8 vertices of the cell, and there might be ways to speed up the geometrical comparison even more.
+This seemed great in theory, however the performance data below does not suggest this helps. This approach most likely beats comparing the boid to all 8 vertices of the cell, and there might be ways to speed up the geometrical comparison even more. There is a flag at the top of ```src/kernel.cu``` called ```OPTIMIZE_SEARCH``` that switches to it: 0 being normal and 1 being 'optimized' approach
 
 ![](images/optimized_noVisual.png)
