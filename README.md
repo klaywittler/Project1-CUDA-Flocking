@@ -128,7 +128,7 @@ The performance by changing the number of threads in a block was fairly negligib
 with the more coherent uniform grid? Was this the outcome you expected?
 Why or why not? </b>
 
-There was a pretty constant increase in the performance impact from having a coherent grid. This was expected since sorting typically becomes worth it as number of look ups increases.
+There was a pretty constant increase in the performance impact from having a coherent grid. This was expected since sorting typically becomes worth it as number of look ups increases. The n boids constant time look up in particleArrayIndices to find their correct index is removed by a preprocess sorting step.
 
 * <b>Did changing cell width and checking 27 vs 8 neighboring cells affect performance?
 Why or why not? Be careful: it is insufficient (and possibly incorrect) to say
