@@ -70,7 +70,7 @@ function velocityChange(Boid boid)
     vector rule2Change = avoidance_velocity * rule2Scale
     vector rule3Change = alignement_velocity * rule3Scale
 
-	return rule1Change + rule2Change + rule3Change
+    return rule1Change + rule2Change + rule3Change
 end
 ```
 
